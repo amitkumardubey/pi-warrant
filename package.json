@@ -1,0 +1,65 @@
+{
+  "name": "pi-warrant",
+  "version": "0.1.0",
+  "description": "Permission gate for the pi coding agent: Jev clears routine tool calls, risky ones stay on a static list, the rest ask you.",
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "Amit Kumar Dubey"
+  },
+  "exports": {
+    ".": "./warrant.ts"
+  },
+  "files": [
+    "warrant.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./warrant.ts"
+    ]
+  },
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "pi-package",
+    "pi-coding-agent",
+    "permissions",
+    "permission-gate",
+    "approval",
+    "auto-approve",
+    "jev",
+    "typesafe",
+    "coding-agent",
+    "access-control"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/amitkumardubey/pi-warrant.git"
+  },
+  "homepage": "https://github.com/amitkumardubey/pi-warrant#readme",
+  "bugs": {
+    "url": "https://github.com/amitkumardubey/pi-warrant/issues"
+  },
+  "scripts": {
+    "test": "bun test/warrant.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.9.3",
+    "@earendil-works/pi-coding-agent": "^1.5.0"
+  }
+}
