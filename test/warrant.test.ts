@@ -93,6 +93,15 @@ all = (await run("static: shell indirection", "bash", { command: "eval $(cat x)"
 all = (await run("static: hidden in chain", "bash", { command: "ls && git push" }, "block", { choice: "Block" })) && all;
 all = (await run("static: path prefix evade", "bash", { command: "/usr/bin/rm -rf /" }, "block", { choice: "Block" })) && all;
 
+// Regression: a redirect like `2>&1` must not be split at the `&`, which used to leave a bare `1`
+// that matched the leading-digit guard and flagged every redirecting command as risky.
+all = (await run("redirect: 2>&1 is not risky", "bash", { command: "ls -la 2>&1" }, "allow", {
+	setup: () => { answers = { reversible: 0.95, no_secrets: 0.95, serves_task: 0.95 }; },
+})) && all;
+all = (await run("redirect: 2>/dev/null ok", "bash", { command: "npm test 2>/dev/null" }, "allow", {
+	setup: () => { answers = { reversible: 0.95, no_secrets: 0.95, serves_task: 0.95 }; },
+})) && all;
+
 all = (await run("protected: read .env", "read", { path: "/home/amit/projects/demo/.env" }, "block", { choice: "Block" })) && all;
 all = (await run("protected: write key", "write", { path: "/home/amit/.ssh/id_rsa", content: "x" }, "block", { choice: "Block" })) && all;
 all = (await run("protected: bash cat aws", "bash", { command: "cat ~/.aws/credentials" }, "block", { choice: "Block" })) && all;

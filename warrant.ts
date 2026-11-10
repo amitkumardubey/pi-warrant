@@ -228,8 +228,16 @@ function normalizeCommand(part: string): string {
 	}
 }
 
+/**
+ * Split a shell command into its command units.
+ *
+ * Redirections are shielded first. In `2>&1` or `&>` the `&` is an operator, but what follows is a
+ * file descriptor or a path, not a new command — splitting there leaves a bare `1` that matches the
+ * leading-digit guard in RISKY, which would flag every redirecting command as suspicious.
+ */
 function eachPart(text: string): string[] {
-	return text.split(/\s*(?:&&|\|\||;|\||&|\n|[(){}])\s*/).map(normalizeCommand);
+	const shielded = text.replace(/(\d?)>>?(&)?(\d+)?/g, (whole) => whole.replace(/&/g, "\u0000"));
+	return shielded.split(/\s*(?:&&|\|\||;|\||&|\n|[(){}])\s*/).map(normalizeCommand);
 }
 
 function firstMatch(patterns: readonly RegExp[], text: string): RegExp | undefined {
