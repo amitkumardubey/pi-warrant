@@ -146,7 +146,11 @@ function loadConfig(): Config {
 	if (typeof config.sessionGrants !== "boolean") config.sessionGrants = CONFIG_DEFAULTS.sessionGrants;
 	if (typeof config.log !== "boolean") config.log = CONFIG_DEFAULTS.log;
 	if (typeof config.model !== "string" && config.model !== null) config.model = CONFIG_DEFAULTS.model;
-	config.timeoutMs = Math.max(250, Math.trunc(config.timeoutMs) || CONFIG_DEFAULTS.timeoutMs);
+	// JSON `1e999` parses to Infinity, which AbortSignal.timeout rejects; fall back instead.
+	config.timeoutMs =
+		typeof config.timeoutMs === "number" && Number.isFinite(config.timeoutMs)
+			? Math.max(250, Math.trunc(config.timeoutMs))
+			: CONFIG_DEFAULTS.timeoutMs;
 	if (!Array.isArray(config.exclude)) config.exclude = [];
 	if (!Array.isArray(config.deny)) config.deny = [];
 	if (!Array.isArray(config.risky)) config.risky = [];

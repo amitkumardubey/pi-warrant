@@ -315,6 +315,17 @@ await withHome(async (home) => {
 	all = check("config: non-string model -> default", status.includes("classifier: typesafe/jev-latest"), status) && all;
 });
 
+// A non-finite timeoutMs (JSON `1e999` parses to Infinity) must fall back, not reach
+// AbortSignal.timeout, which throws on Infinity.
+await withHome(async (home) => {
+	const path = configFile(home);
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, '{"timeoutMs": 1e999}\n', "utf8");
+	await runCommand("reload");
+	const status = (await runCommand("status")).join("\n");
+	all = check("config: non-finite timeoutMs -> default", status.includes("timeout: 8000ms"), status) && all;
+});
+
 // Valid numbers still load.
 await withHome(async (home) => {
 	writeConfig(home, { approveAt: 0.8, blockAt: 0.2 });
