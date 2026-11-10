@@ -51,7 +51,7 @@
  * Dry-run a command:    /warrant test rm -rf /
  */
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ClassifierApi, ClassifierModel } from "@earendil-works/pi-ai";
@@ -132,10 +132,25 @@ function loadConfig(): Config {
 	} catch {
 		/* no config file, or unreadable: the defaults are the safe choice */
 	}
-	config.approveAt = clamp01(config.approveAt);
-	config.blockAt = clamp01(config.blockAt);
+	// A mistyped value falls back to the default, never to 0: 0 would widen the gate.
+	config.approveAt =
+		typeof config.approveAt === "number" && Number.isFinite(config.approveAt)
+			? clamp01(config.approveAt)
+			: CONFIG_DEFAULTS.approveAt;
+	config.blockAt =
+		typeof config.blockAt === "number" && Number.isFinite(config.blockAt)
+			? clamp01(config.blockAt)
+			: CONFIG_DEFAULTS.blockAt;
 	if (config.blockAt > config.approveAt) config.blockAt = config.approveAt;
-	config.timeoutMs = Math.max(250, Math.trunc(config.timeoutMs) || CONFIG_DEFAULTS.timeoutMs);
+	if (typeof config.enabled !== "boolean") config.enabled = CONFIG_DEFAULTS.enabled;
+	if (typeof config.sessionGrants !== "boolean") config.sessionGrants = CONFIG_DEFAULTS.sessionGrants;
+	if (typeof config.log !== "boolean") config.log = CONFIG_DEFAULTS.log;
+	if (typeof config.model !== "string" && config.model !== null) config.model = CONFIG_DEFAULTS.model;
+	// JSON `1e999` parses to Infinity, which AbortSignal.timeout rejects; fall back instead.
+	config.timeoutMs =
+		typeof config.timeoutMs === "number" && Number.isFinite(config.timeoutMs)
+			? Math.max(250, Math.trunc(config.timeoutMs))
+			: CONFIG_DEFAULTS.timeoutMs;
 	if (!Array.isArray(config.exclude)) config.exclude = [];
 	if (!Array.isArray(config.deny)) config.deny = [];
 	if (!Array.isArray(config.risky)) config.risky = [];
@@ -228,8 +243,16 @@ function normalizeCommand(part: string): string {
 	}
 }
 
+/**
+ * Split a shell command into its command units.
+ *
+ * Redirections are shielded first: in `2>&1` or `2>/dev/null` the `&` and digits belong to the
+ * redirection, not a new command. Splitting there would leave a bare `1` that matches the
+ * leading-digit guard in RISKY and flag every redirecting command as suspicious.
+ */
 function eachPart(text: string): string[] {
-	return text.split(/\s*(?:&&|\|\||;|\||&|\n|[(){}])\s*/).map(normalizeCommand);
+	const shielded = text.replace(/\d?>>?&?\d*/g, (whole) => whole.replace(/&/g, "\u0000"));
+	return shielded.split(/\s*(?:&&|\|\||;|\||&|\n|[(){}])\s*/).map(normalizeCommand);
 }
 
 function firstMatch(patterns: readonly RegExp[], text: string): RegExp | undefined {
@@ -255,9 +278,11 @@ const REDACTIONS: [RegExp, string][] = [
 	// Authorization headers, so the scheme word is not mistaken for a value below.
 	[/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]"],
 	// KEY=value and KEY: value assignments with secret-looking names. The lookahead keeps a bare
-	// scheme word (`Authorization: Bearer`) from being read as the secret itself.
+	// scheme word (`Authorization: Bearer`) from being read as the secret itself. Brackets are
+	// excluded from the value so a path like `/tmp/AUTH=secret)` keeps its closing `)`, which
+	// otherwise disappears into the mask and corrupts the rest of the sentence.
 	[
-		/\b([A-Za-z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|AUTH)[A-Za-z0-9_.-]*)(\s*[=:]\s*)(["']?)(?!Bearer\b|Basic\b)([^\s"',;]{4,})\3/gi,
+		/\b([A-Za-z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|AUTH)[A-Za-z0-9_.-]*)(\s*[=:]\s*)(["']?)(?!Bearer\b|Basic\b)([^\s"',;()\[\]{}<>]{4,})\3/gi,
 		"$1$2$3[redacted]$3",
 	],
 	// Vendor key and token shapes.
@@ -363,7 +388,14 @@ function describeCall(toolName: string, input: unknown): CallShape {
 	if (PATH_TOOLS.has(toolName) || path) {
 		const detail: Record<string, unknown> = {};
 		for (const key of ["offset", "limit", "pattern", "glob", "oldText", "newText", "content"]) {
-			if (record[key] !== undefined) detail[key] = redactValue(record[key]);
+			const value = record[key];
+			if (value === undefined) continue;
+			// Write bodies are omitted outright: `redactValue` applies REDACTED_FIELDS only to
+			// object keys, so a bare string would otherwise reach Jev verbatim.
+			detail[key] =
+				key === "oldText" || key === "newText" || key === "content"
+					? `[${typeof value === "string" ? value.length : 0} chars omitted]`
+					: redactValue(value);
 		}
 		return {
 			toolName,
@@ -694,7 +726,19 @@ function appendLog(entry: Record<string, unknown>, config: Config): void {
 	try {
 		const path = logPath();
 		mkdirSync(dirname(path), { recursive: true });
-		appendFileSync(path, `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`, "utf8");
+		// Every string is untrusted: the target and the reason both embed command or path text,
+		// and a path can carry a secret (`cat /tmp/AUTH=...`) that the target rule would miss.
+		const safe: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(entry)) {
+			safe[key] = typeof value === "string" ? redactText(value) : value;
+		}
+		appendFileSync(path, `${JSON.stringify({ ts: new Date().toISOString(), ...safe })}\n`, {
+			encoding: "utf8",
+			mode: 0o600,
+		});
+		// `mode` applies only when the file is created; tighten one that already exists. Checking
+		// first keeps this a read on the hot path instead of a metadata write per tool call.
+		if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
 	} catch {
 		/* logging must never break a tool call */
 	}
@@ -787,7 +831,7 @@ export default function warrant(pi: ExtensionAPI): void {
 		appendLog(
 			{
 				tool: call.toolName,
-				target: call.target.slice(0, 500),
+				target: redactText(call.target).slice(0, 500),
 				outcome: decision.outcome,
 				stage: decision.stage,
 				reason: decision.reason,
@@ -855,13 +899,15 @@ export default function warrant(pi: ExtensionAPI): void {
 					return;
 				}
 				case "thresholds": {
-					const [approveAt, blockAt] = arg.split(/\s+/).map(Number);
-					if (!Number.isFinite(approveAt)) {
+					// `Number("")` is 0, so an empty arg must be rejected before it reaches the clamp.
+					const tokens = arg.split(/\s+/).filter(Boolean);
+					if (tokens.length === 0 || tokens.some((token) => !Number.isFinite(Number(token)))) {
 						ctx.ui.notify("usage: /warrant thresholds <approveAt> [blockAt]", "warning");
 						return;
 					}
+					const approveAt = Number(tokens[0]);
 					config = { ...config, approveAt: clamp01(approveAt) };
-					if (Number.isFinite(blockAt)) config.blockAt = clamp01(blockAt);
+					if (tokens.length > 1) config.blockAt = clamp01(Number(tokens[1]));
 					if (config.blockAt > config.approveAt) config.blockAt = config.approveAt;
 					const error = saveConfig(config);
 					ctx.ui.notify(
