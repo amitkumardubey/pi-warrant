@@ -51,7 +51,7 @@
  * Dry-run a command:    /warrant test rm -rf /
  */
 
-import { appendFileSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ClassifierApi, ClassifierModel } from "@earendil-works/pi-ai";
@@ -278,9 +278,11 @@ const REDACTIONS: [RegExp, string][] = [
 	// Authorization headers, so the scheme word is not mistaken for a value below.
 	[/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]"],
 	// KEY=value and KEY: value assignments with secret-looking names. The lookahead keeps a bare
-	// scheme word (`Authorization: Bearer`) from being read as the secret itself.
+	// scheme word (`Authorization: Bearer`) from being read as the secret itself. Brackets are
+	// excluded from the value so a path like `/tmp/AUTH=secret)` keeps its closing `)`, which
+	// otherwise disappears into the mask and corrupts the rest of the sentence.
 	[
-		/\b([A-Za-z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|AUTH)[A-Za-z0-9_.-]*)(\s*[=:]\s*)(["']?)(?!Bearer\b|Basic\b)([^\s"',;]{4,})\3/gi,
+		/\b([A-Za-z0-9_.-]*(?:SECRET|TOKEN|PASSWORD|PASSWD|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|AUTH)[A-Za-z0-9_.-]*)(\s*[=:]\s*)(["']?)(?!Bearer\b|Basic\b)([^\s"',;()\[\]{}<>]{4,})\3/gi,
 		"$1$2$3[redacted]$3",
 	],
 	// Vendor key and token shapes.
@@ -734,8 +736,9 @@ function appendLog(entry: Record<string, unknown>, config: Config): void {
 			encoding: "utf8",
 			mode: 0o600,
 		});
-		// `mode` applies only when the file is created; tighten one that already exists.
-		chmodSync(path, 0o600);
+		// `mode` applies only when the file is created; tighten one that already exists. Checking
+		// first keeps this a read on the hot path instead of a metadata write per tool call.
+		if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
 	} catch {
 		/* logging must never break a tool call */
 	}

@@ -406,6 +406,8 @@ await withHome(async (home) => {
 	);
 	const log = readFileSync(logFile(home), "utf8");
 	all = check("log: token in path withheld", !log.includes(token), log.trim()) && all;
+	// The mask must not swallow the sentence around it: a path ending in `)` keeps its bracket.
+	all = check("log: redaction preserves brackets", log.includes("resolves outside the project"), log.trim()) && all;
 });
 
 process.env.HOME = realHome;
