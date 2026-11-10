@@ -246,12 +246,12 @@ function normalizeCommand(part: string): string {
 /**
  * Split a shell command into its command units.
  *
- * Redirections are shielded first. In `2>&1` or `&>` the `&` is an operator, but what follows is a
- * file descriptor or a path, not a new command — splitting there leaves a bare `1` that matches the
- * leading-digit guard in RISKY, which would flag every redirecting command as suspicious.
+ * Redirections are shielded first: in `2>&1` or `2>/dev/null` the `&` and digits belong to the
+ * redirection, not a new command. Splitting there would leave a bare `1` that matches the
+ * leading-digit guard in RISKY and flag every redirecting command as suspicious.
  */
 function eachPart(text: string): string[] {
-	const shielded = text.replace(/(\d?)>>?(&)?(\d+)?/g, (whole) => whole.replace(/&/g, "\u0000"));
+	const shielded = text.replace(/\d?>>?&?\d*/g, (whole) => whole.replace(/&/g, "\u0000"));
 	return shielded.split(/\s*(?:&&|\|\||;|\||&|\n|[(){}])\s*/).map(normalizeCommand);
 }
 
@@ -724,11 +724,12 @@ function appendLog(entry: Record<string, unknown>, config: Config): void {
 	try {
 		const path = logPath();
 		mkdirSync(dirname(path), { recursive: true });
-		// The target is command or path text and can carry a token; store its shape only.
-		const safe = {
-			...entry,
-			target: typeof entry.target === "string" ? redactText(entry.target) : entry.target,
-		};
+		// Every string is untrusted: the target and the reason both embed command or path text,
+		// and a path can carry a secret (`cat /tmp/AUTH=...`) that the target rule would miss.
+		const safe: Record<string, unknown> = {};
+		for (const [key, value] of Object.entries(entry)) {
+			safe[key] = typeof value === "string" ? redactText(value) : value;
+		}
 		appendFileSync(path, `${JSON.stringify({ ts: new Date().toISOString(), ...safe })}\n`, {
 			encoding: "utf8",
 			mode: 0o600,

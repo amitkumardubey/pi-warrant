@@ -395,6 +395,19 @@ await withHome(async (home) => {
 	all = check("log: mode 0600", mode === 0o600, mode.toString(8)) && all;
 });
 
+// A secret carried in a path reaches the log through the containment reason, not only the target.
+await withHome(async (home) => {
+	writeConfig(home, { log: true });
+	await runCommand("reload");
+	const token = "SUPERSECRETVALUE12345";
+	await onToolCall(
+		{ toolName: "bash", input: { command: `cat /tmp/notes/AUTH=${token}` } },
+		makeCtx({ hasUI: false }),
+	);
+	const log = readFileSync(logFile(home), "utf8");
+	all = check("log: token in path withheld", !log.includes(token), log.trim()) && all;
+});
+
 process.env.HOME = realHome;
 rmSync(suiteHome, { recursive: true, force: true });
 

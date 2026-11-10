@@ -141,6 +141,8 @@ Every decision appends one JSONL line to `~/.pi/agent/extensions/warrant.log` wi
  "model":"typesafe/jev-latest","cost":0.00002}
 ```
 
+The file is created owner-only (`0600`). Targets and reasons are redacted before writing, but redaction is pattern-based: a secret in an unrecognized shape — a bare token in an argument, say — can still reach the log. Treat it as a sensitive file.
+
 One Decision request per call that reaches the model — nothing is spent on calls your static rules already resolve. In the cookbook's runs a request cost about $0.00002 and returned in under 600 ms.
 
 ## Cost and latency
